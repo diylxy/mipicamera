@@ -8,12 +8,10 @@ struct camera_buffer {
 };
 typedef void (*camera_buffer_cb)(struct camera_buffer *buffer, int bytesused, void *data);
 
-void open_device(const char *dev_name);
-int set_format(
-	int width,
-	int height,
-	unsigned int format
-);
+int open_device(const char *dev_name);
+void set_resolution(int _width, int _height);
+int get_width(void);
+int get_height(void);
 int init_device(void);
 int start_capturing(void);
 int read_frame(camera_buffer_cb processor, void *data);

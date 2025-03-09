@@ -8,28 +8,66 @@
 extern "C" {
 #include "v4l2-camera.h"
 }
+
+bool started = false;
+
 static PyObject *method_open(PyObject *self, PyObject *args) {
     char *filename = NULL;
     /* Parse arguments */
     if(!PyArg_ParseTuple(args, "s", &filename)) {
+        return NULL;
+    }
+    if (filename[0] == '\0') {
         filename = "/dev/video0";
     }
-    open_device(filename);
-    init_device();
-    start_capturing();
+    if (open_device(filename) != 0) {
+        return PyBool_FromLong(0);
+    }
+    return PyBool_FromLong(1);
+}
+
+static PyObject *method_setResolution(PyObject *self, PyObject *args) {
+    int width, height;
+    /* Parse arguments */
+    if(!PyArg_ParseTuple(args, "ii", &width, &height)) {
+        return NULL;
+    }
+
+    if (started) {
+        return PyBool_FromLong(0);
+    }
+
+    set_resolution(width, height);
+
+    return PyBool_FromLong(1);
+}
+
+static PyObject *method_start(PyObject *self, PyObject *args) {
+    if (started) {
+        return PyBool_FromLong(1);
+    }
+
+    if (init_device() != 0) {
+        return PyBool_FromLong(0);
+    }
+
+    if (start_capturing() != 0) {
+        return PyBool_FromLong(0);
+    }
+    started = true;
     return PyBool_FromLong(1);
 }
 
 static void copy_buffer(struct camera_buffer *buffer, int bytesused, void *data) {
-    int width = 640;
-    int height = 480;
+    int width = get_width();
+    int height = get_height();
 	cv::Mat yuvmat(cv::Size(width, height*3/2), CV_8UC1, buffer->start);
 	cv::Mat rgbmat(cv::Size(width, height), CV_8UC3, data);
 	cv::cvtColor(yuvmat, rgbmat, CV_YUV2BGR_I420);
 }
 
 static PyObject *method_read(PyObject *self, PyObject *args) {
-    npy_intp dims[3] = {480, 640, 3}; // 1D array with 10 elements
+    npy_intp dims[3] = {get_height(), get_width(), 3};
     PyObject *numpy_array;
     /* Create a new NumPy array */
     numpy_array = PyArray_SimpleNew(3, dims, NPY_UBYTE);
@@ -48,6 +86,8 @@ static PyObject *method_read(PyObject *self, PyObject *args) {
 
 static PyMethodDef MipicameraMethods[] = {
     {"open", method_open, METH_VARARGS, "open the camera"},
+    {"setResolution", method_setResolution, METH_VARARGS, "set the resolution"},
+    {"start", method_start, METH_VARARGS, "start streaming"},
     {"read", method_read, METH_VARARGS, "read one frame"},
     {NULL, NULL, 0, NULL}
 };

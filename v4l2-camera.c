@@ -56,15 +56,20 @@ static int xioctl(int fh, int request, void *arg)
 	return r;
 }
 
-void open_device(const char *dev_name)
+int open_device(const char *dev_name)
 {
+	if (fd != -1) {
+		ERR("device already opened\n");
+		return 2;
+	}
     fd = open(dev_name, O_RDWR /* required */ /*| O_NONBLOCK*/, 0);
 
     if (-1 == fd) {
         ERR("Cannot open '%s': %d, %s\n",
                     dev_name, errno, strerror(errno));
-        exit(EXIT_FAILURE);
+        return 1;
     }
+	return 0;
 }
 
 
@@ -142,24 +147,37 @@ static int init_mmap(void)
 	return 0;
 }
 
+void set_resolution(int _width, int _height) {
+	width = _width;
+	height = _height;
+}
+
 int set_format(
-	int width,
-	int height,
-	unsigned int format
+	int _width,
+	int _height
 ) {
 	struct v4l2_format fmt;
 
 	CLEAR(fmt);
 	fmt.type = buf_type;
-	fmt.fmt.pix.width = width;
-	fmt.fmt.pix.height = height;
+	fmt.fmt.pix.width = _width;
+	fmt.fmt.pix.height = _height;
 	fmt.fmt.pix.pixelformat = format;
 	fmt.fmt.pix.field = V4L2_FIELD_INTERLACED;
 
 	if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
 		return errno;
-
+	width = _width;
+	height = _height;
 	return 0;
+}
+
+int get_width(void) {
+	return width;
+}
+
+int get_height(void) {
+	return height;
 }
 
 int init_device(void)
@@ -194,7 +212,7 @@ int init_device(void)
         buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
 	}
 
-	if (set_format(width, height, format)) {
+	if (set_format(width, height)) {
 		ERR("set format failed\n");
 		return 1;
 	}
