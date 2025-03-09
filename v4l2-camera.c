@@ -27,7 +27,7 @@ firefly
 
 #include "v4l2-camera.h"
 
-#define BUFFER_COUNT 4
+#define BUFFER_COUNT 1
 #define FMT_NUM_PLANES 1
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
@@ -93,7 +93,7 @@ static int init_mmap(void)
 		}
 	}
 
-	if (req.count < 2) {
+	if (req.count < 1) {
 		ERR("Insufficient buffer memory\n");
 		return 1;
 	}
