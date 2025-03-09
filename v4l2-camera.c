@@ -217,6 +217,17 @@ int init_device(void)
 		return 1;
 	}
 
+	struct v4l2_control ctl;
+	ctl.id = V4L2_CID_AUTO_WHITE_BALANCE;
+	ctl.value = 1;
+	ioctl(fd, VIDIOC_S_CTRL, &ctl);
+	ctl.id = V4L2_CID_EXPOSURE_AUTO;
+	ctl.value = V4L2_EXPOSURE_AUTO;
+	ioctl(fd, VIDIOC_S_CTRL, &ctl);
+	ctl.id = V4L2_CID_AUTOGAIN;
+	ctl.value = 1;
+	ioctl(fd, VIDIOC_S_CTRL, &ctl);
+
     return init_mmap();
 }
 
