@@ -25,11 +25,7 @@ firefly
 
 #include <linux/videodev2.h>
 
-struct buffer {
-        void *start;
-        size_t length;
-        struct v4l2_buffer v4l2_buf;
-};
+#include "v4l2-camera.h"
 
 #define BUFFER_COUNT 4
 #define FMT_NUM_PLANES 1
@@ -42,32 +38,25 @@ struct buffer {
 static int fd = -1;
 FILE *fp=NULL;
 static unsigned int n_buffers;
-struct buffer *buffers;
+struct camera_buffer *buffers;
 static int silent=0;
 
-static char dev_name[255]="/dev/video0";
 static int width = 640;
 static int height = 480;
+static int format = V4L2_PIX_FMT_YUV420;
 static enum v4l2_buf_type buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-static int format = V4L2_PIX_FMT_NV12;
 
-
-static void errno_exit(const char *s)
-{
-	ERR("%s error %d, %s\n", s, errno, strerror(errno));
-	exit(EXIT_FAILURE);
-}
 
 static int xioctl(int fh, int request, void *arg)
 {
 	int r;
 	do {
-			r = ioctl(fh, request, arg);
+		r = ioctl(fh, request, arg);
 	} while (-1 == r && EINTR == errno);
 	return r;
 }
 
-void open_device(void)
+void open_device(const char *dev_name)
 {
     fd = open(dev_name, O_RDWR /* required */ /*| O_NONBLOCK*/, 0);
 
@@ -79,7 +68,7 @@ void open_device(void)
 }
 
 
-static void init_mmap(void)
+static int init_mmap(void)
 {
 	struct v4l2_requestbuffers req;
 
@@ -91,25 +80,24 @@ static void init_mmap(void)
 
 	if (-1 == xioctl(fd, VIDIOC_REQBUFS, &req)) {
 		if (EINVAL == errno) {
-				ERR("%s does not support "
-								"memory mapping\n", dev_name);
-				exit(EXIT_FAILURE);
+			ERR("device does not support "
+							"memory mapping\n");
+			return 1;
 		} else {
-				errno_exit("VIDIOC_REQBUFS");
+			return errno;
 		}
 	}
 
 	if (req.count < 2) {
-		ERR("Insufficient buffer memory on %s\n",
-						dev_name);
-		exit(EXIT_FAILURE);
+		ERR("Insufficient buffer memory\n");
+		return 1;
 	}
 
-	buffers = (struct buffer*)calloc(req.count, sizeof(*buffers));
+	buffers = (struct camera_buffer*)calloc(req.count, sizeof(*buffers));
 
 	if (!buffers) {
 		ERR("Out of memory\n");
-		exit(EXIT_FAILURE);
+		return 1;
 	}
 
 	for (n_buffers = 0; n_buffers < req.count; ++n_buffers) {
@@ -128,7 +116,7 @@ static void init_mmap(void)
 		}
 
 		if (-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
-			errno_exit("VIDIOC_QUERYBUF");
+			return errno;
 
 		if (V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE == buf_type) {
 			buffers[n_buffers].length = buf.m.planes[0].length;
@@ -149,89 +137,110 @@ static void init_mmap(void)
 		}
 
 		if (MAP_FAILED == buffers[n_buffers].start)
-				errno_exit("mmap");
+			return errno;
 	}
+	return 0;
 }
 
-void init_device(void)
+int set_format(
+	int width,
+	int height,
+	unsigned int format
+) {
+	struct v4l2_format fmt;
+
+	CLEAR(fmt);
+	fmt.type = buf_type;
+	fmt.fmt.pix.width = width;
+	fmt.fmt.pix.height = height;
+	fmt.fmt.pix.pixelformat = format;
+	fmt.fmt.pix.field = V4L2_FIELD_INTERLACED;
+
+	if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
+		return errno;
+
+	return 0;
+}
+
+int init_device(void)
 {
     struct v4l2_capability cap;
-    struct v4l2_format fmt;
 
     if (-1 == xioctl(fd, VIDIOC_QUERYCAP, &cap)) {
-            if (EINVAL == errno) {
-                    ERR("%s is no V4L2 device\n",
-                                dev_name);
-                    exit(EXIT_FAILURE);
-            } else {
-                    errno_exit("VIDIOC_QUERYCAP");
-            }
+		if (EINVAL == errno) {
+			ERR("camera is no V4L2 device\n");
+			return 1;
+		} else {
+			return errno;
+		}
     }
 
     if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) &&
             !(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE)) {
-        ERR("%s is not a video capture device, capabilities: %x\n",
-                        dev_name, cap.capabilities);
-            exit(EXIT_FAILURE);
+        ERR("not a video capture device, capabilities: %x\n",
+                        cap.capabilities);
+            return 1;
     }
 
     if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
-            ERR("%s does not support streaming i/o\n",
-                dev_name);
-            exit(EXIT_FAILURE);
+		ERR("device does not support streaming i/o\n");
+		return 1;
     }
 
-    if (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)
+    if (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) {
         buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    else if (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE)
+	}
+    else if (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
         buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	}
 
-    CLEAR(fmt);
-    fmt.type = buf_type;
-    fmt.fmt.pix.width = width;
-    fmt.fmt.pix.height = height;
-    fmt.fmt.pix.pixelformat = format;
-    fmt.fmt.pix.field = V4L2_FIELD_INTERLACED;
+	if (set_format(width, height, format)) {
+		ERR("set format failed\n");
+		return 1;
+	}
 
-    if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
-            errno_exit("VIDIOC_S_FMT");
-
-    init_mmap();
+    return init_mmap();
 }
 
 
-void start_capturing(void)
+int start_capturing(void)
 {
 	unsigned int i;
 	enum v4l2_buf_type type;
 
 	for (i = 0; i < n_buffers; ++i) {
-			struct v4l2_buffer buf;
+		struct v4l2_buffer buf;
 
-			CLEAR(buf);
-			buf.type = buf_type;
-			buf.memory = V4L2_MEMORY_MMAP;
-			buf.index = i;
+		CLEAR(buf);
+		buf.type = buf_type;
+		buf.memory = V4L2_MEMORY_MMAP;
+		buf.index = i;
 
-			if (V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE == buf_type) {
-				struct v4l2_plane planes[FMT_NUM_PLANES];
+		if (V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE == buf_type) {
+			struct v4l2_plane planes[FMT_NUM_PLANES];
 
-				buf.m.planes = planes;
-				buf.length = FMT_NUM_PLANES;
-			}
-			if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
-					errno_exit("VIDIOC_QBUF");
+			buf.m.planes = planes;
+			buf.length = FMT_NUM_PLANES;
+		}
+		if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
+			return errno;
 	}
 	type = buf_type;
 	if (-1 == xioctl(fd, VIDIOC_STREAMON, &type))
-			errno_exit("VIDIOC_STREAMON");
+		return errno;
+	return 0;
 }
 
 
-int read_frame()
+int read_frame(camera_buffer_cb processor, void *data)
 {
 	struct v4l2_buffer buf;
 	int i, bytesused;
+
+	if (processor == NULL) {
+		ERR("processor is NULL\n");
+		return 1;
+	}
 
 	CLEAR(buf);
 
@@ -245,7 +254,7 @@ int read_frame()
 	}
 
 	if (-1 == xioctl(fd, VIDIOC_DQBUF, &buf))
-			errno_exit("VIDIOC_DQBUF");
+		return errno;
 
 	i = buf.index;
 
@@ -253,37 +262,11 @@ int read_frame()
 			bytesused = buf.m.planes[0].bytesused;
 	else
 			bytesused = buf.bytesused;
-	// process_buffer(&(buffers[i]), bytesused);
+	processor(&(buffers[i]), bytesused, data);
 	DBG("bytesused %d\n", bytesused);
 
 	if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
-			errno_exit("VIDIOC_QBUF");
+		return errno;
 
-	return 1;
-}
-
-static unsigned long get_time(void)
-{
-	struct timeval ts;
-	gettimeofday(&ts, NULL);
-	return (ts.tv_sec * 1000 + ts.tv_usec / 1000);
-}
-
-
-static void mainloop(void)
-{
-	unsigned int count = 1;
-	unsigned long read_start_time, read_end_time;
-
-	while (1) {
-
-		DBG("No.%d\n", count);        //Display the current image frame number
-
-		read_start_time = get_time();
-		read_frame();
-		read_end_time = get_time();
-
-		DBG("take time %lu ms\n",read_end_time - read_start_time);
-	}
-	DBG("\nREAD AND SAVE DONE!\n");
+	return 0;
 }

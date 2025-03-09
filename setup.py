@@ -8,10 +8,10 @@ def main():
           author_email="your_email@gmail.com",
           ext_modules=[
               Extension(
-                  "mipicamera", ["mipicamera.c", "v4l2-camera.c"], 
-                  extra_link_args = ['-lm'],
+                  "mipicamera", ["mipicamera.cpp", "v4l2-camera.c"], 
+                  extra_link_args = ['-lm', '-lopencv_core', '-lopencv_imgproc', '-lopencv_imgcodecs'],
                   define_macros=[('NPY_NO_DEPRECATED_API', 'NPY_1_7_API_VERSION')],
-                  include_dirs=[numpy.get_include()],
+                  include_dirs=[numpy.get_include(), "/usr/include/opencv4"],
           )])
 
 if __name__ == "__main__":
